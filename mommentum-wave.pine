@@ -1,0 +1,118 @@
+//@version=4
+study(title="WaveTrend + Squeeze Momentum [Combined]", shorttitle="WT+SQZ", overlay=false, format=format.volume)
+
+// === INPUT PARAMETERS ===
+// WaveTrend Settings
+wt_n1 = input(10, title="WT Channel Length", group="WaveTrend Settings")
+wt_n2 = input(21, title="WT Average Length", group="WaveTrend Settings")
+wt_obLevel1 = input(60, title="WT Overbought Level 1", group="WaveTrend Settings")
+wt_obLevel2 = input(53, title="WT Overbought Level 2", group="WaveTrend Settings")
+wt_osLevel1 = input(-60, title="WT Oversold Level 1", group="WaveTrend Settings")
+wt_osLevel2 = input(-53, title="WT Oversold Level 2", group="WaveTrend Settings")
+
+// Squeeze Settings
+bb_length = input(20, title="BB Length", group="Squeeze Settings")
+bb_mult = input(2.0, title="BB MultFactor", group="Squeeze Settings")
+kc_length = input(20, title="KC Length", group="Squeeze Settings")
+kc_mult = input(1.5, title="KC MultFactor", group="Squeeze Settings")
+use_tr = input(true, title="Use TrueRange (KC)", group="Squeeze Settings")
+
+// Display Settings
+show_wt = input(true, title="Show WaveTrend", group="Display")
+show_sqz = input(true, title="Show Squeeze Momentum", group="Display")
+show_signals = input(true, title="Show Combined Signals", group="Display")
+
+// === WAVETREND CALCULATION ===
+wt_ap = hlc3
+wt_esa = ema(wt_ap, wt_n1)
+wt_d = ema(abs(wt_ap - wt_esa), wt_n1)
+wt_ci = (wt_ap - wt_esa) / (0.015 * wt_d)
+wt_tci = ema(wt_ci, wt_n2)
+wt1 = wt_tci
+wt2 = sma(wt1, 4)
+
+// === SQUEEZE MOMENTUM CALCULATION ===
+// Bollinger Bands
+bb_basis = sma(close, bb_length)
+bb_dev = bb_mult * stdev(close, bb_length)
+bb_upper = bb_basis + bb_dev
+bb_lower = bb_basis - bb_dev
+
+// Keltner Channels
+kc_ma = sma(close, kc_length)
+kc_range = use_tr ? tr : (high - low)
+kc_rangema = sma(kc_range, kc_length)
+kc_upper = kc_ma + kc_rangema * kc_mult
+kc_lower = kc_ma - kc_rangema * kc_mult
+
+// Squeeze Detection
+sqz_on = (bb_lower > kc_lower) and (bb_upper < kc_upper)
+sqz_off = (bb_lower < kc_lower) and (bb_upper > kc_upper)
+no_sqz = not sqz_on and not sqz_off
+
+// Momentum Value
+sqz_val = linreg(close - avg(avg(highest(high, kc_length), lowest(low, kc_length)), sma(close, kc_length)), kc_length, 0)
+
+// === COMBINED SIGNALS ===
+// Signal Detection
+bullish_setup = sqz_on and wt1 <= wt_osLevel1
+bearish_setup = sqz_on and wt1 >= wt_obLevel1
+bullish_entry = sqz_off and wt1 > wt2 and sqz_val > 0
+bearish_entry = sqz_off and wt1 < wt2 and sqz_val < 0
+
+// Signal Strength
+signal_strength = 0
+signal_strength := sqz_on ? signal_strength + 1 : signal_strength
+signal_strength := (wt1 > wt_osLevel2 and wt1 < wt_obLevel2) ? signal_strength : signal_strength + 1
+signal_strength := (wt1 > wt2) == (sqz_val > 0) ? signal_strength + 1 : signal_strength
+
+// === COLORS ===
+// WaveTrend Colors
+wt1_color = wt1 > wt2 ? color.lime : color.red
+wt2_color = color.orange
+wt_hist_color = wt1 > wt2 ? color.new(color.lime, 70) : color.new(color.red, 70)
+
+// Squeeze Colors
+sqz_momentum_color = sqz_val > 0 ? 
+    (sqz_val > nz(sqz_val[1]) ? color.lime : color.green) : 
+    (sqz_val < nz(sqz_val[1]) ? color.red : color.maroon)
+
+sqz_dot_color = no_sqz ? color.blue : sqz_on ? color.black : color.gray
+
+// === PLOTS ===
+// Reference Lines
+hline(0, title="Zero Line", color=color.gray, linestyle=hline.style_dashed)
+hline(wt_obLevel1, title="WT OB Level 1", color=color.red, linestyle=hline.style_dotted)
+hline(wt_obLevel2, title="WT OB Level 2", color=color.orange, linestyle=hline.style_dotted)
+hline(wt_osLevel1, title="WT OS Level 1", color=color.green, linestyle=hline.style_dotted)
+hline(wt_osLevel2, title="WT OS Level 2", color=color.lime, linestyle=hline.style_dotted)
+
+// WaveTrend Plots
+plot(show_wt ? wt1 : na, title="WaveTrend 1", color=wt1_color, linewidth=2)
+plot(show_wt ? wt2 : na, title="WaveTrend 2", color=wt2_color, linewidth=1)
+plot(show_wt ? wt1 - wt2 : na, title="WT Histogram", color=wt_hist_color, style=plot.style_columns, histbase=0)
+
+// Squeeze Momentum (scaled to fit with WaveTrend)
+sqz_scaled = sqz_val * 20  // Scale factor for visibility
+plot(show_sqz ? sqz_scaled : na, title="Squeeze Momentum", color=sqz_momentum_color, style=plot.style_columns, linewidth=3, histbase=0, transp=30)
+
+// Squeeze State Indicator
+plotchar(show_sqz, title="Squeeze State", char="●", location=location.bottom, color=sqz_dot_color, size=size.small)
+
+// === SIGNAL OVERLAYS ===
+// Setup Signals
+plotshape(show_signals and bullish_setup, title="Bullish Setup", style=shape.circle, location=location.bottom, color=color.yellow, size=size.small)
+plotshape(show_signals and bearish_setup, title="Bearish Setup", style=shape.circle, location=location.top, color=color.yellow, size=size.small)
+
+// Entry Signals
+plotshape(show_signals and bullish_entry, title="Bullish Entry", style=shape.triangleup, location=location.bottom, color=color.lime, size=size.normal)
+plotshape(show_signals and bearish_entry, title="Bearish Entry", style=shape.triangledown, location=location.top, color=color.red, size=size.normal)
+
+// === ALERTS ===
+alertcondition(bullish_setup, title="Bullish Setup Alert", message="WaveTrend + Squeeze: Bullish Setup Detected")
+alertcondition(bearish_setup, title="Bearish Setup Alert", message="WaveTrend + Squeeze: Bearish Setup Detected")
+alertcondition(bullish_entry, title="Bullish Entry Alert", message="WaveTrend + Squeeze: Bullish Entry Signal")
+alertcondition(bearish_entry, title="Bearish Entry Alert", message="WaveTrend + Squeeze: Bearish Entry Signal")
+
+// === BACKGROUND COLORS ===
+bgcolor(sqz_on ? color.new(color.yellow, 95) : na, title="Squeeze Background")
