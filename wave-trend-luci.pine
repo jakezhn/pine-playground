@@ -1,0 +1,129 @@
+//@version=5
+indicator(title='WaveTrend [LuciTech]', overlay=false)
+
+// Inputs
+channelLength = input(8, 'Channel Length')
+averageLength = input(16, 'Average Length')
+calculateDivergence = input(true, 'Divergence')
+showBarColor = input(true, 'Candle Colours')
+showBBSignals = input(true, 'Potential TP Signals')
+bullcolour = input.color(color.rgb(0,255,0), title = 'Bull/Bear', inline = 'peb')
+bearcolour = input.color(color.rgb(255,0,0), title = '', inline = 'peb')
+
+// WaveTrend Logic
+closedprice = close
+smoothedPrice = ta.ema(closedprice, channelLength)
+priceVolatility = ta.ema(math.abs(closedprice - smoothedPrice), channelLength)
+waveIndex = (closedprice - smoothedPrice) / (0.015 * priceVolatility)
+waveTrend = ta.ema(waveIndex, averageLength)
+waveTrendSmoothed = ta.sma(waveTrend, 4)
+trendChange = ta.cross(waveTrend, waveTrendSmoothed)
+waveLine = plot(waveTrend, "Wave Trend", color=color.rgb(33, 150, 243,100), linewidth=1)
+signalLine = plot(waveTrendSmoothed, "Signal Line", color=color.rgb(255, 82, 82,100), linewidth=1)
+fill(waveLine, signalLine, color = waveTrend > waveTrendSmoothed ? bullcolour : bearcolour) 
+
+// Candle Colour Logic 
+barColor = waveTrend > waveTrendSmoothed ? bullcolour : bearcolour
+barcolor(showBarColor ? barColor : na)
+
+// Bollinger Bands Logic
+bbSource = waveTrend
+bbMiddle = ta.sma(bbSource, 34)
+bbDeviation = 2.0 * ta.stdev(bbSource, 34)
+bbUpper = bbMiddle + bbDeviation
+bbLower = bbMiddle - bbDeviation
+bbOffset = 0
+bearishBBSignal = waveTrend > bbUpper and waveTrendSmoothed > bbUpper
+bullishBBSignal = waveTrend < bbLower and waveTrendSmoothed < bbLower
+bullishBBCross = bullishBBSignal and not bullishBBSignal[1]
+bearishBBCross = bearishBBSignal and not bearishBBSignal[1]
+bgcolor(bearishBBSignal ? color.rgb(192,192,192,50) : bullishBBSignal ? color.rgb(192,192,192,50) : na)
+plotshape(showBBSignals and bullishBBCross, title="Bullish BB Signal", style=shape.xcross, location=location.belowbar, color=bullcolour, size=size.tiny, text="", textcolor=color.white, force_overlay=true)
+plotshape(showBBSignals and bearishBBCross, title="Bearish BB Signal", style=shape.xcross, location=location.abovebar, color=bearcolour, size=size.tiny, text="", textcolor=color.white, force_overlay=true)
+
+// Overbought And Sold Logic
+midLinePlot = plot(0, color = na, editable = false, display = display.none)
+fill(waveLine, midLinePlot, -60, -80, top_color = color.new(bullcolour, 100), bottom_color = color.new(bullcolour, 0),  title = "Overbought Gradient Fill")
+fill(signalLine, midLinePlot, 80,  60,  top_color = color.new(bearcolour, 0), bottom_color = color.new(bearcolour, 100),      title = "Oversold Gradient Fill")
+lol1 = hline(-60,na,color.rgb(192,192,192,50))
+hline(-80,na,color.rgb(192,192,192,50))
+lol = hline(60,na,color.rgb(192,192,192,50))
+hline(80,na,color.rgb(192,192,192,50))
+fill(lol1,lol, color.rgb(192,192,192,75))
+hline(-40, "Oversold", color=color.rgb(192,192,192,50))
+hline(-60, "Oversold", color=color.rgb(192,192,192,50))
+hline(40, "Overbought", color=color.rgb(192,192,192,50))
+hline(60, "Overbought", color=color.rgb(192,192,192,50))
+
+//Divergence Logic
+lookbackRight = 5
+lookbackLeft = 5
+rangeUpper = 60
+rangeLower = 5
+noneColor = color.new(color.white, 100)
+
+_inRange(bool cond) =>
+    bars = ta.barssince(cond)
+    rangeLower <= bars and bars <= rangeUpper
+
+plFound = false
+phFound = false
+
+bullCond = false
+bearCond = false
+bullCondPlus = false
+bearCondPlus = false
+
+waveTrendLBR = waveTrend[lookbackRight]
+
+if calculateDivergence
+    //------------------------------------------------------------------------------
+    // Regular Bullish
+    // waveTrend: Higher Low
+    plFound := not na(ta.pivotlow(waveTrend, lookbackLeft, lookbackRight))    
+    waveTrendHL = waveTrendLBR > ta.valuewhen(plFound, waveTrendLBR, 1) and _inRange(plFound[1])
+    // Price: Lower Low
+    lowLBR = low[lookbackRight]
+    priceLL = lowLBR < ta.valuewhen(plFound, lowLBR, 1)
+    bullCond := priceLL and waveTrendHL and plFound
+    
+    // Plus Bullish (with pivot point under -60)
+    pivotValue = ta.valuewhen(plFound, waveTrendLBR, 1)
+    bullCondPlus := bullCond and pivotValue < -60
+
+    //------------------------------------------------------------------------------
+    // Regular Bearish
+    // waveTrend: Lower High
+    phFound := not na(ta.pivothigh(waveTrend, lookbackLeft, lookbackRight))
+    waveTrendLH = waveTrendLBR < ta.valuewhen(phFound, waveTrendLBR, 1) and _inRange(phFound[1])
+    // Price: Higher High
+    highLBR = high[lookbackRight]
+    priceHH = highLBR > ta.valuewhen(phFound, highLBR, 1)
+    bearCond := priceHH and waveTrendLH and phFound
+    
+    // Plus Bearish (with pivot point over 60)
+    pivotValueBear = ta.valuewhen(phFound, waveTrendLBR, 1)
+    bearCondPlus := bearCond and pivotValueBear > 60
+
+// Plots divergence on indicator pane
+plot(
+     plFound ? waveTrendLBR : na,
+     offset=-lookbackRight,
+     title="Regular Bullish",
+     linewidth=2,
+     color=(bullCond ? bullcolour : noneColor),
+     display = display.pane
+     )
+
+plot(
+     phFound ? waveTrendLBR : na,
+     offset=-lookbackRight,
+     title="Regular Bearish",
+     linewidth=2,
+     color=(bearCond ? bearcolour : noneColor),
+     display = display.pane
+     )
+plotshape(bullCond and not bullCondPlus, title="Bullish Divergence", style=shape.labelup, location=location.belowbar, color=bullcolour, size=size.tiny, text="▲", textcolor=color.white, force_overlay=true)
+plotshape(bearCond and not bearCondPlus, title="Bearish Divergence", style=shape.labeldown, location=location.abovebar, color=bearcolour, size=size.tiny, text="▼", textcolor=color.white, force_overlay=true)
+plotshape(bullCondPlus, title="Bullish Divergence Plus", style=shape.labelup, location=location.belowbar, color=bullcolour, size=size.small, text="▲+", textcolor=color.white, force_overlay=true)
+plotshape(bearCondPlus, title="Bearish Divergence Plus", style=shape.labeldown, location=location.abovebar, color=bearcolour, size=size.small, text="▼+", textcolor=color.white, force_overlay=true)
