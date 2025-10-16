@@ -4,26 +4,38 @@ indicator(title='wave-trend', overlay=false)
 // Inputs
 channelLength = input(8, 'Channel Length')
 averageLength = input(16, 'Average Length')
+lookbackLeftInput = input.int(5, 'Lookback Left', minval=1)
+lookbackRightInput = input.int(5, 'Lookback Right', minval=1)
+rangeLowerInput = input.int(5, 'Range Lower', minval=1)
+rangeUpperInput = input.int(60, 'Range Upper', minval=1)
 calculateDivergence = input(true, 'Divergence')
 showBarColor = input(true, 'Candle Colours')
 showBBSignals = input(true, 'Potential TP Signals')
 bullcolour = input.color(color.rgb(0,255,0), title = 'Bull/Bear', inline = 'peb')
 bearcolour = input.color(color.rgb(255,0,0), title = '', inline = 'peb')
 
+// Cached constants
+var float waveIndexScale = 0.015
+var float epsilonVol = 1e-10
+var color neutralShade = color.rgb(192, 192, 192, 50)
+var color neutralShadeStrong = color.rgb(192, 192, 192, 75)
+
 // WaveTrend Logic
 closedprice = close
 smoothedPrice = ta.ema(closedprice, channelLength)
 priceVolatility = ta.ema(math.abs(closedprice - smoothedPrice), channelLength)
-waveIndex = (closedprice - smoothedPrice) / (0.015 * priceVolatility)
+volDenom = math.max(priceVolatility, epsilonVol)
+waveIndex = (closedprice - smoothedPrice) / (waveIndexScale * volDenom)
 waveTrend = ta.ema(waveIndex, averageLength)
 waveTrendSmoothed = ta.sma(waveTrend, 4)
 trendChange = ta.cross(waveTrend, waveTrendSmoothed)
+isWaveBull = waveTrend > waveTrendSmoothed
 waveLine = plot(waveTrend, "Wave Trend", color=color.rgb(33, 150, 243,100), linewidth=1)
 signalLine = plot(waveTrendSmoothed, "Signal Line", color=color.rgb(255, 82, 82,100), linewidth=1)
-fill(waveLine, signalLine, color = waveTrend > waveTrendSmoothed ? bullcolour : bearcolour) 
+fill(waveLine, signalLine, color = isWaveBull ? bullcolour : bearcolour) 
 
 // Candle Colour Logic 
-barColor = waveTrend > waveTrendSmoothed ? bullcolour : bearcolour
+barColor = isWaveBull ? bullcolour : bearcolour
 barcolor(showBarColor ? barColor : na)
 
 // Bollinger Bands Logic
@@ -33,11 +45,15 @@ bbDeviation = 2.0 * ta.stdev(bbSource, 34)
 bbUpper = bbMiddle + bbDeviation
 bbLower = bbMiddle - bbDeviation
 bbOffset = 0
-bearishBBSignal = waveTrend > bbUpper and waveTrendSmoothed > bbUpper
-bullishBBSignal = waveTrend < bbLower and waveTrendSmoothed < bbLower
+waveAboveUpper = waveTrend > bbUpper
+signalAboveUpper = waveTrendSmoothed > bbUpper
+waveBelowLower = waveTrend < bbLower
+signalBelowLower = waveTrendSmoothed < bbLower
+bearishBBSignal = waveAboveUpper and signalAboveUpper
+bullishBBSignal = waveBelowLower and signalBelowLower
 bullishBBCross = bullishBBSignal and not bullishBBSignal[1]
 bearishBBCross = bearishBBSignal and not bearishBBSignal[1]
-bgcolor(bearishBBSignal ? color.rgb(192,192,192,50) : bullishBBSignal ? color.rgb(192,192,192,50) : na)
+bgcolor(bearishBBSignal ? neutralShade : bullishBBSignal ? neutralShade : na)
 plotshape(showBBSignals and bullishBBCross, title="Bullish BB Signal", style=shape.xcross, location=location.belowbar, color=bullcolour, size=size.tiny, text="", textcolor=color.white, force_overlay=true)
 plotshape(showBBSignals and bearishBBCross, title="Bearish BB Signal", style=shape.xcross, location=location.abovebar, color=bearcolour, size=size.tiny, text="", textcolor=color.white, force_overlay=true)
 
@@ -45,21 +61,21 @@ plotshape(showBBSignals and bearishBBCross, title="Bearish BB Signal", style=sha
 midLinePlot = plot(0, color = na, editable = false, display = display.none)
 fill(waveLine, midLinePlot, -60, -80, top_color = color.new(bullcolour, 100), bottom_color = color.new(bullcolour, 0),  title = "Overbought Gradient Fill")
 fill(signalLine, midLinePlot, 80,  60,  top_color = color.new(bearcolour, 0), bottom_color = color.new(bearcolour, 100),      title = "Oversold Gradient Fill")
-lol1 = hline(-60,na,color.rgb(192,192,192,50))
-hline(-80,na,color.rgb(192,192,192,50))
-lol = hline(60,na,color.rgb(192,192,192,50))
-hline(80,na,color.rgb(192,192,192,50))
-fill(lol1,lol, color.rgb(192,192,192,75))
-hline(-40, "Oversold", color=color.rgb(192,192,192,50))
-hline(-60, "Oversold", color=color.rgb(192,192,192,50))
-hline(40, "Overbought", color=color.rgb(192,192,192,50))
-hline(60, "Overbought", color=color.rgb(192,192,192,50))
+lol1 = hline(-60,na,neutralShade)
+hline(-80,na,neutralShade)
+lol = hline(60,na,neutralShade)
+hline(80,na,neutralShade)
+fill(lol1,lol, neutralShadeStrong)
+hline(-40, "Oversold", color=neutralShade)
+hline(-60, "Oversold", color=neutralShade)
+hline(40, "Overbought", color=neutralShade)
+hline(60, "Overbought", color=neutralShade)
 
-//Divergence Logic
-lookbackRight = 5
-lookbackLeft = 5
-rangeUpper = 60
-rangeLower = 5
+// Divergence configuration
+lookbackLeft = lookbackLeftInput
+lookbackRight = lookbackRightInput
+rangeLower = rangeLowerInput
+rangeUpper = rangeUpperInput
 noneColor = color.new(color.white, 100)
 
 _inRange(bool cond) =>
@@ -74,40 +90,34 @@ bearCond = false
 bullCondPlus = false
 bearCondPlus = false
 
-waveTrendLBR = waveTrend[lookbackRight]
+waveTrendL = waveTrend[lookbackRight]
 
 if calculateDivergence
-    //------------------------------------------------------------------------------
     // Regular Bullish
-    // waveTrend: Higher Low
     plFound := not na(ta.pivotlow(waveTrend, lookbackLeft, lookbackRight))    
-    waveTrendHL = waveTrendLBR > ta.valuewhen(plFound, waveTrendLBR, 1) and _inRange(plFound[1])
-    // Price: Lower Low
-    lowLBR = low[lookbackRight]
-    priceLL = lowLBR < ta.valuewhen(plFound, lowLBR, 1)
+    prevWavePivotLow = ta.valuewhen(plFound, waveTrendL, 1)
+    waveTrendHL = waveTrendL > prevWavePivotLow and _inRange(plFound[1])
+    lowL = low[lookbackRight]
+    prevPricePivotLow = ta.valuewhen(plFound, low[lookbackRight], 1)
+    priceLL = lowL < prevPricePivotLow
     bullCond := priceLL and waveTrendHL and plFound
-    
-    // Plus Bullish (with pivot point under -60)
-    pivotValue = ta.valuewhen(plFound, waveTrendLBR, 1)
+    pivotValue = prevWavePivotLow
     bullCondPlus := bullCond and pivotValue < -60
 
-    //------------------------------------------------------------------------------
     // Regular Bearish
-    // waveTrend: Lower High
     phFound := not na(ta.pivothigh(waveTrend, lookbackLeft, lookbackRight))
-    waveTrendLH = waveTrendLBR < ta.valuewhen(phFound, waveTrendLBR, 1) and _inRange(phFound[1])
-    // Price: Higher High
-    highLBR = high[lookbackRight]
-    priceHH = highLBR > ta.valuewhen(phFound, highLBR, 1)
+    prevWavePivotHigh = ta.valuewhen(phFound, waveTrendL, 1)
+    waveTrendLH = waveTrendL < prevWavePivotHigh and _inRange(phFound[1])
+    highL = high[lookbackRight]
+    prevPricePivotHigh = ta.valuewhen(phFound, high[lookbackRight], 1)
+    priceHH = highL > prevPricePivotHigh
     bearCond := priceHH and waveTrendLH and phFound
-    
-    // Plus Bearish (with pivot point over 60)
-    pivotValueBear = ta.valuewhen(phFound, waveTrendLBR, 1)
+    pivotValueBear = prevWavePivotHigh
     bearCondPlus := bearCond and pivotValueBear > 60
 
 // Plots divergence on indicator pane
 plot(
-     plFound ? waveTrendLBR : na,
+     plFound ? waveTrendL : na,
      offset=-lookbackRight,
      title="Regular Bullish",
      linewidth=2,
@@ -116,7 +126,7 @@ plot(
      )
 
 plot(
-     phFound ? waveTrendLBR : na,
+     phFound ? waveTrendL : na,
      offset=-lookbackRight,
      title="Regular Bearish",
      linewidth=2,
