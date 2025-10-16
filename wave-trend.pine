@@ -9,8 +9,12 @@ lookbackRightInput = input.int(5, 'Lookback Right', minval=1)
 rangeLowerInput = input.int(5, 'Range Lower', minval=1)
 rangeUpperInput = input.int(60, 'Range Upper', minval=1)
 calculateDivergence = input(true, 'Divergence')
+divergenceMode = input.string('Confirmed only', 'Divergence Mode', options=['Confirmed only', 'Early heads-up'], tooltip='"Confirmed only" aligns divergence markers to the actual pivot bar and requires lookbackRight bars of confirmation. "Early heads-up" plots provisional markers on the detection bar without offset and may repaint until the pivot finalises.')
+// "Early heads-up" plots divergence labels without waiting for lookbackRight confirmation bars, so repaint is possible.
 showBarColor = input(true, 'Candle Colours')
 showBBSignals = input(true, 'Potential TP Signals')
+crossCooldownBars = input.int(3, 'Cross Cooldown Bars', minval=0, tooltip='Minimum bars between WaveTrend/Signal cross notifications to reduce noise in choppy conditions.')
+// Cross cooldown prevents repeated cross alerts within the chosen number of bars to tame choppy sessions.
 bullcolour = input.color(color.rgb(0,255,0), title = 'Bull/Bear', inline = 'peb')
 bearcolour = input.color(color.rgb(255,0,0), title = '', inline = 'peb')
 
@@ -28,7 +32,13 @@ volDenom = math.max(priceVolatility, epsilonVol)
 waveIndex = (closedprice - smoothedPrice) / (waveIndexScale * volDenom)
 waveTrend = ta.ema(waveIndex, averageLength)
 waveTrendSmoothed = ta.sma(waveTrend, 4)
-trendChange = ta.cross(waveTrend, waveTrendSmoothed)
+crossEvent = ta.cross(waveTrend, waveTrendSmoothed)
+var int lastCrossBar = na
+// Skip new cross signals until the cooldown window has expired.
+allowCross = na(lastCrossBar) or bar_index - lastCrossBar > crossCooldownBars
+trendChange = crossEvent and allowCross
+if trendChange
+    lastCrossBar := bar_index
 isWaveBull = waveTrend > waveTrendSmoothed
 waveLine = plot(waveTrend, "Wave Trend", color=color.rgb(33, 150, 243,100), linewidth=1)
 signalLine = plot(waveTrendSmoothed, "Signal Line", color=color.rgb(255, 82, 82,100), linewidth=1)
@@ -76,6 +86,7 @@ lookbackLeft = lookbackLeftInput
 lookbackRight = lookbackRightInput
 rangeLower = rangeLowerInput
 rangeUpper = rangeUpperInput
+// Range lower/upper gate the bar distance between pivots so divergence comparisons ignore signals that are too close or too old.
 noneColor = color.new(color.white, 100)
 
 _inRange(bool cond) =>
@@ -91,12 +102,17 @@ bullCondPlus = false
 bearCondPlus = false
 
 waveTrendL = waveTrend[lookbackRight]
-
+var bool inRangeBull = false
+var bool inRangeBear = false
+isConfirmedMode = divergenceMode == 'Confirmed only'
+// Confirmed mode shifts markers back to the pivot bar; heads-up mode leaves them on the detection bar.
+divergenceOffset = isConfirmedMode ? -lookbackRight : 0
 if calculateDivergence
     // Regular Bullish
     plFound := not na(ta.pivotlow(waveTrend, lookbackLeft, lookbackRight))    
     prevWavePivotLow = ta.valuewhen(plFound, waveTrendL, 1)
-    waveTrendHL = waveTrendL > prevWavePivotLow and _inRange(plFound[1])
+    inRangeBull := _inRange(plFound[1])
+    waveTrendHL = waveTrendL > prevWavePivotLow and inRangeBull
     lowL = low[lookbackRight]
     prevPricePivotLow = ta.valuewhen(plFound, low[lookbackRight], 1)
     priceLL = lowL < prevPricePivotLow
@@ -107,7 +123,8 @@ if calculateDivergence
     // Regular Bearish
     phFound := not na(ta.pivothigh(waveTrend, lookbackLeft, lookbackRight))
     prevWavePivotHigh = ta.valuewhen(phFound, waveTrendL, 1)
-    waveTrendLH = waveTrendL < prevWavePivotHigh and _inRange(phFound[1])
+    inRangeBear := _inRange(phFound[1])
+    waveTrendLH = waveTrendL < prevWavePivotHigh and inRangeBear
     highL = high[lookbackRight]
     prevPricePivotHigh = ta.valuewhen(phFound, high[lookbackRight], 1)
     priceHH = highL > prevPricePivotHigh
@@ -118,7 +135,7 @@ if calculateDivergence
 // Plots divergence on indicator pane
 plot(
      plFound ? waveTrendL : na,
-     offset=-lookbackRight,
+     offset=divergenceOffset,
      title="Regular Bullish",
      linewidth=2,
      color=(bullCond ? bullcolour : noneColor),
@@ -127,13 +144,13 @@ plot(
 
 plot(
      phFound ? waveTrendL : na,
-     offset=-lookbackRight,
+     offset=divergenceOffset,
      title="Regular Bearish",
      linewidth=2,
      color=(bearCond ? bearcolour : noneColor),
      display = display.pane
      )
-plotshape(bullCond and not bullCondPlus, title="Bullish Divergence", style=shape.labelup, location=location.belowbar, color=bullcolour, size=size.tiny, text="▲", textcolor=color.white, force_overlay=true)
-plotshape(bearCond and not bearCondPlus, title="Bearish Divergence", style=shape.labeldown, location=location.abovebar, color=bearcolour, size=size.tiny, text="▼", textcolor=color.white, force_overlay=true)
-plotshape(bullCondPlus, title="Bullish Divergence Plus", style=shape.labelup, location=location.belowbar, color=bullcolour, size=size.small, text="▲+", textcolor=color.white, force_overlay=true)
-plotshape(bearCondPlus, title="Bearish Divergence Plus", style=shape.labeldown, location=location.abovebar, color=bearcolour, size=size.small, text="▼+", textcolor=color.white, force_overlay=true)
+plotshape(bullCond and not bullCondPlus, title="Bullish Divergence", style=shape.labelup, location=location.belowbar, color=bullcolour, size=size.tiny, text='▲', textcolor=color.white, offset=divergenceOffset, force_overlay=true)
+plotshape(bearCond and not bearCondPlus, title="Bearish Divergence", style=shape.labeldown, location=location.abovebar, color=bearcolour, size=size.tiny, text='▼', textcolor=color.white, offset=divergenceOffset, force_overlay=true)
+plotshape(bullCondPlus, title="Bullish Divergence Plus", style=shape.labelup, location=location.belowbar, color=bullcolour, size=size.small, text='▲+', textcolor=color.white, offset=divergenceOffset, force_overlay=true)
+plotshape(bearCondPlus, title="Bearish Divergence Plus", style=shape.labeldown, location=location.abovebar, color=bearcolour, size=size.small, text='▼+', textcolor=color.white, offset=divergenceOffset, force_overlay=true)
